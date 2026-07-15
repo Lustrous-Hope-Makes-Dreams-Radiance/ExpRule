@@ -20,14 +20,14 @@ public class Main extends JavaPlugin implements Listener {
     public void onEnable() {
         // 注册监听器
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("经验掉落插件已加载");
+        getLogger().info("ExpRule has been enabled.");
     }
 
     @EventHandler
     public void onPlayerDeath(PlayerDeathEvent event) {
         Player player = event.getEntity();
 
-        // 如果是开启了死亡不掉落
+        // 判断死亡不掉落
         Boolean keepInv = player.getWorld().getGameRuleValue(GameRule.KEEP_INVENTORY);
         if (keepInv != null && keepInv) {
             // 计算原版掉落经验（等级 * 7，最大上限 100）
@@ -36,6 +36,10 @@ public class Main extends JavaPlugin implements Listener {
             event.setKeepLevel(false);
             event.setNewLevel(0);
             event.setNewExp(0);
+
+            if (droppedExp <= 0) {
+                return;
+            }
 
             // 获取玩家死亡位置
             Block deathBlock = player.getLocation().getBlock();
@@ -47,7 +51,7 @@ public class Main extends JavaPlugin implements Listener {
                 // 附近有催发体：拦截所有掉落的经验球
                 event.setDroppedExp(0);
 
-                // 打擂台：找出距离死亡位置最近的催发体
+                // 找出距离死亡位置最近的催发体
                 Block nearest = null;
                 double nearestDistSq = Double.MAX_VALUE;
                 for (Block b : catalysts) {
@@ -63,8 +67,12 @@ public class Main extends JavaPlugin implements Listener {
                     try {
                         catalyst.bloom(deathBlock, droppedExp);
                     } catch (Exception e) {
-                        // 极低概率的边界防御：防止因其他插件保护导致 bloom 抛出异常
-                        getLogger().warning("催发体在触发蔓延时发生异常: " + e.getMessage());
+                        // 记录死亡玩家、死亡位置和催发体位置
+                        String playerName = player.getName();
+                        String deathPos = deathBlock.getWorld().getName() + " " + deathBlock.getX() + "," + deathBlock.getY() + "," + deathBlock.getZ();
+                        String catalystPos = nearest.getWorld().getName() + " " + nearest.getX() + "," + nearest.getY() + "," + nearest.getZ();
+                        getLogger().warning("Player " + playerName + " died, nearest catalyst at " + catalystPos +
+                                            " triggered bloom exception, death location: " + deathPos + ", reason: " + e.getMessage());
                     }
                 }
             } else {
@@ -74,10 +82,7 @@ public class Main extends JavaPlugin implements Listener {
         }
     }
 
-    /**
-     * 收集以 center 为中心、半径 radius 格（球体）内的所有幽匿催发体方块。
-     * 采用球面剪枝与世界高度边界检查，避免无效检索，运行耗时低。
-     */
+    // 收集以 center 为中心、半径 radius 格（球体）内的所有幽匿催发体方块。
     private List<Block> getNearbyCatalysts(Block center, int radius) {
         List<Block> found = new ArrayList<>();
         int radiusSq = radius * radius;
