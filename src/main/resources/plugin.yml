@@ -1,4 +1,4 @@
 name: ExpRule
-version: 1.1.1
+version: ${project.version}
 main: com.exprule.Main
 api-version: '1.21'
