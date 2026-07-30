@@ -1,4 +1,4 @@
-name: ExpRule
+name: ${project.artifactId}
 version: ${project.version}
 main: com.exprule.Main
-api-version: '1.21'
+api-version: '${apiVersion}'
