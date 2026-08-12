@@ -123,9 +123,8 @@ public class Main extends JavaPlugin implements Listener {
 
             String deathPos = deathBlock.getWorld().getName() + " " + deathBlock.getX() + "," + deathBlock.getY() + "," + deathBlock.getZ();
             String catalystPos = catalyst.getWorld().getName() + " " + catalyst.getX() + "," + catalyst.getY() + "," + catalyst.getZ();
-            getLogger().warning("玩家 " + playerName + " 死亡，位于 " + catalystPos
-                    + " 的最近幽匿催发体触发催发时发生异常；死亡位置：" + deathPos
-                    + "；原因：" + e.getMessage());
+            getLogger().warning("Player " + playerName + " died, nearest catalyst at " + catalystPos +
+                                " triggered bloom exception, death location: " + deathPos + ", reason: " + e.getMessage());
         }
     }
 
