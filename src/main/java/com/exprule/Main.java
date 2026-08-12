@@ -48,7 +48,7 @@ public class Main extends JavaPlugin implements Listener {
     public void onEnable() {
         // 注册监听器
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("ExpRule 已启用。");
+        getLogger().info("ExpRule has been enabled.");
 
         List<int[]> posList = new ArrayList<>();
         for (int dx = -8; dx <= 8; dx++) {
