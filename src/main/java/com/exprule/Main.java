@@ -1,9 +1,11 @@
 package com.exprule;
 
 import org.bukkit.GameRule;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.SculkCatalyst;
+import org.bukkit.entity.ExperienceOrb;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -19,7 +21,7 @@ public class Main extends JavaPlugin implements Listener {
     private static short[] findingTable;
     static class PosCompressor{
         private static final int BITS = 5;
-        private static final int MASK = (1 << BITS) - 1; // 0x1F
+        private static final int MASK = (1 << BITS) - 1; // 低 5 位掩码（0x1F）
         private static final int OFFSET = 8;
 
         public static short compress(int x, int y, int z) {
@@ -46,7 +48,7 @@ public class Main extends JavaPlugin implements Listener {
     public void onEnable() {
         // 注册监听器
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("ExpRule has been enabled.");
+        getLogger().info("ExpRule 已启用。");
 
         List<int[]> posList = new ArrayList<>();
         for (int dx = -8; dx <= 8; dx++) {
@@ -85,7 +87,8 @@ public class Main extends JavaPlugin implements Listener {
             }
 
             // 获取玩家死亡位置
-            Block deathBlock = player.getLocation().getBlock();
+            Location deathLocation = player.getLocation().clone();
+            Block deathBlock = deathLocation.getBlock();
 
             // 寻找 8 格半径内的最近的幽匿催发体
             Block catalyst = getNearestCatalyst(deathBlock);
@@ -94,22 +97,40 @@ public class Main extends JavaPlugin implements Listener {
                 // 附近有催发体：拦截所有掉落的经验球
                 event.setDroppedExp(0);
 
-                // 最近的那个催发体吸收经验并触发幽匿蔓延
-                try {
-                    ((SculkCatalyst)catalyst.getState()).bloom(deathBlock, droppedExp);
-                } catch (Exception e) {
-                    // 记录死亡玩家、死亡位置和催发体位置
-                    String playerName = player.getName();
-                    String deathPos = deathBlock.getWorld().getName() + " " + deathBlock.getX() + "," + deathBlock.getY() + "," + deathBlock.getZ();
-                    String catalystPos = catalyst.getWorld().getName() + " " + catalyst.getX() + "," + catalyst.getY() + "," + catalyst.getZ();
-                    getLogger().warning("Player " + playerName + " died, nearest catalyst at " + catalystPos +
-                                        " triggered bloom exception, death location: " + deathPos + ", reason: " + e.getMessage());
-                }
+                // 下一游戏刻再结算，让同一次爆炸先完成方块破坏。
+                getServer().getScheduler().runTaskLater(this,
+                        () -> settleExperience(catalyst, deathBlock, deathLocation, droppedExp, player.getName()),
+                        1L);
             } else {
                 // 附近没有催发体：按原版逻辑正常掉出经验球
                 event.setDroppedExp(droppedExp);
             }
         }
+    }
+
+    private void settleExperience(Block catalyst, Block deathBlock, Location deathLocation,
+                                  int droppedExp, String playerName) {
+        if (catalyst.getType() != Material.SCULK_CATALYST) {
+            spawnExperience(deathLocation, droppedExp);
+            return;
+        }
+
+        try {
+            ((SculkCatalyst)catalyst.getState()).bloom(deathBlock, droppedExp);
+        } catch (Exception e) {
+            // 催发失败时不能吞掉玩家经验。
+            spawnExperience(deathLocation, droppedExp);
+
+            String deathPos = deathBlock.getWorld().getName() + " " + deathBlock.getX() + "," + deathBlock.getY() + "," + deathBlock.getZ();
+            String catalystPos = catalyst.getWorld().getName() + " " + catalyst.getX() + "," + catalyst.getY() + "," + catalyst.getZ();
+            getLogger().warning("玩家 " + playerName + " 死亡，位于 " + catalystPos
+                    + " 的最近幽匿催发体触发催发时发生异常；死亡位置：" + deathPos
+                    + "；原因：" + e.getMessage());
+        }
+    }
+
+    private void spawnExperience(Location location, int experience) {
+        location.getWorld().spawn(location, ExperienceOrb.class, orb -> orb.setExperience(experience));
     }
 
     public Block getNearestCatalyst(Block center) {
