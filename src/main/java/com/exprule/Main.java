@@ -1,9 +1,11 @@
 package com.exprule;
 
 import org.bukkit.GameRule;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.SculkCatalyst;
+import org.bukkit.entity.ExperienceOrb;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -76,40 +78,59 @@ public class Main extends JavaPlugin implements Listener {
             // 计算原版掉落经验（等级 * 7，最大上限 100）
             int droppedExp = Math.min(player.getLevel() * 7, 100);
 
-            event.setKeepLevel(false);
-            event.setNewLevel(0);
-            event.setNewExp(0);
+            // 保留等级和经验条（keepInventory=true 的核心行为）
+            event.setKeepLevel(true);
+            event.setNewLevel(player.getLevel());
+            event.setNewExp(player.getExp());
 
             if (droppedExp <= 0) {
                 return;
             }
 
             // 获取玩家死亡位置
-            Block deathBlock = player.getLocation().getBlock();
+            Location deathLocation = player.getLocation().clone();
+            Block deathBlock = deathLocation.getBlock();
 
             // 寻找 8 格半径内的最近的幽匿催发体
             Block catalyst = getNearestCatalyst(deathBlock);
 
             if (Objects.nonNull(catalyst)) {
-                // 附近有催发体：拦截所有掉落的经验球
-                event.setDroppedExp(0);
+                // 记录催发体位置（而非 Block 快照），以便后续重新获取最新状态
+                Location catalystLocation = catalyst.getLocation();
 
-                // 最近的那个催发体吸收经验并触发幽匿蔓延
-                try {
-                    ((SculkCatalyst)catalyst.getState()).bloom(deathBlock, droppedExp);
-                } catch (Exception e) {
-                    // 记录死亡玩家、死亡位置和催发体位置
-                    String playerName = player.getName();
-                    String deathPos = deathBlock.getWorld().getName() + " " + deathBlock.getX() + "," + deathBlock.getY() + "," + deathBlock.getZ();
-                    String catalystPos = catalyst.getWorld().getName() + " " + catalyst.getX() + "," + catalyst.getY() + "," + catalyst.getZ();
-                    getLogger().warning("Player " + playerName + " died, nearest catalyst at " + catalystPos +
-                                        " triggered bloom exception, death location: " + deathPos + ", reason: " + e.getMessage());
-                }
+                // 同 tick 结束前结算，确保在方块破坏阶段前完成 bloom
+                getServer().getScheduler().runTask(this, () ->
+                        settleExperience(catalystLocation, deathBlock, deathLocation, droppedExp));
             } else {
                 // 附近没有催发体：按原版逻辑正常掉出经验球
-                event.setDroppedExp(droppedExp);
+                spawnExperience(deathLocation, droppedExp);
             }
         }
+    }
+
+    private void settleExperience(Location catalystLocation, Block deathBlock,
+                                  Location deathLocation, int droppedExp) {
+        // 关键：重新从世界获取当前方块状态，正确检测催发体是否被同爆炸破坏
+        Block catalyst = catalystLocation.getWorld().getBlockAt(catalystLocation);
+
+        if (catalyst.getType() == Material.SCULK_CATALYST) {
+            // 催发体存活：触发 bloom（播放声音 + 生成蔓延光标，后续 tick 自动蔓延幽匿块）
+            try {
+                ((SculkCatalyst) catalyst.getState()).bloom(deathBlock, droppedExp);
+            } catch (Exception e) {
+                // 催发失败兜底：掉落经验
+                spawnExperience(deathLocation, droppedExp);
+                getLogger().warning("Catalyst bloom failed at " + catalystLocation +
+                        ", experience dropped as fallback. Reason: " + e.getMessage());
+            }
+        } else {
+            // 催发体已被破坏（如 TNT 同爆炸）：按原版逻辑掉落经验
+            spawnExperience(deathLocation, droppedExp);
+        }
+    }
+
+    private void spawnExperience(Location location, int experience) {
+        location.getWorld().spawn(location, ExperienceOrb.class, orb -> orb.setExperience(experience));
     }
 
     public Block getNearestCatalyst(Block center) {
