@@ -21,7 +21,7 @@ public class Main extends JavaPlugin implements Listener {
     private static short[] findingTable;
     static class PosCompressor{
         private static final int BITS = 5;
-        private static final int MASK = (1 << BITS) - 1; // 低 5 位掩码（0x1F）
+        private static final int MASK = (1 << BITS) - 1; // 0x1F
         private static final int OFFSET = 8;
 
         public static short compress(int x, int y, int z) {
