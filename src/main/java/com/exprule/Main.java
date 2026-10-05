@@ -1,128 +1,70 @@
 package com.exprule;
 
 import org.bukkit.GameRule;
-import org.bukkit.Material;
-import org.bukkit.block.Block;
-import org.bukkit.block.SculkCatalyst;
+import org.bukkit.GameEvent;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.world.GenericGameEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Objects;
+import java.util.logging.Level;
 
 public class Main extends JavaPlugin implements Listener {
-    private static short[] findingTable;
-    static class PosCompressor{
-        private static final int BITS = 5;
-        private static final int MASK = (1 << BITS) - 1; // 0x1F
-        private static final int OFFSET = 8;
-
-        public static short compress(int x, int y, int z) {
-            int va = x + OFFSET;
-            int vb = y + OFFSET;
-            int vc = z + OFFSET;
-            return (short) ((va << (BITS * 2)) | (vb << BITS) | vc);
-        }
-
-        public static int getX(short pos) {
-            return ((pos >>> (BITS * 2)) & MASK) - OFFSET;
-        }
-
-        public static int getY(short pos) {
-            return ((pos >>> BITS) & MASK) - OFFSET;
-        }
-
-        public static int getZ(short pos) {
-            return (pos & MASK) - OFFSET;
-        }
-    }
+    private PaperCatalystAccess catalystAccess;
 
     @Override
     public void onEnable() {
+        try {
+            catalystAccess = new PaperCatalystAccess();
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            getLogger().log(Level.SEVERE, "Cannot access Paper death experience handling; base death experience will still drop.", e);
+        }
+
         // 注册监听器
         getServer().getPluginManager().registerEvents(this, this);
         getLogger().info("ExpRule has been enabled.");
 
-        List<int[]> posList = new ArrayList<>();
-        for (int dx = -8; dx <= 8; dx++) {
-            for (int dy = -8; dy <= 8; dy++) {
-                for (int dz = -8; dz <= 8; dz++){
-                    if (dx * dx + dy * dy + dz * dz <= 64) {
-                        posList.add(new int[]{dx, dy, dz});
-                    }
-                }
-            }
-        }
-        findingTable = new short[posList.size()];
-        System.out.println(posList.size());
-        int index = 0;
-        for (int[] ints : posList.stream().sorted(Comparator.comparingInt((pos) -> pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2])).toList()) {
-            findingTable[index++] = PosCompressor.compress(ints[0], ints[1], ints[2]);
-        }
     }
 
-    @EventHandler
+    @EventHandler(ignoreCancelled = true)
     public void onPlayerDeath(PlayerDeathEvent event) {
         Player player = event.getEntity();
 
         // 判断死亡不掉落
         Boolean keepInv = player.getWorld().getGameRuleValue(GameRule.KEEP_INVENTORY);
         if (keepInv != null && keepInv) {
-            // 计算原版掉落经验（等级 * 7，最大上限 100）
-            int droppedExp = Math.min(player.getLevel() * 7, 100);
-
             event.setKeepLevel(false);
             event.setNewLevel(0);
             event.setNewExp(0);
-
-            if (droppedExp <= 0) {
-                return;
-            }
-
-            // 获取玩家死亡位置
-            Block deathBlock = player.getLocation().getBlock();
-
-            // 寻找 8 格半径内的最近的幽匿催发体
-            Block catalyst = getNearestCatalyst(deathBlock);
-
-            if (Objects.nonNull(catalyst)) {
-                // 附近有催发体：拦截所有掉落的经验球
-                event.setDroppedExp(0);
-
-                // 最近的那个催发体吸收经验并触发幽匿蔓延
+            int droppedExp = PaperCatalystAccess.baseExperience(player);
+            if (catalystAccess != null) {
                 try {
-                    ((SculkCatalyst)catalyst.getState()).bloom(deathBlock, droppedExp);
-                } catch (Exception e) {
-                    // 记录死亡玩家、死亡位置和催发体位置
-                    String playerName = player.getName();
-                    String deathPos = deathBlock.getWorld().getName() + " " + deathBlock.getX() + "," + deathBlock.getY() + "," + deathBlock.getZ();
-                    String catalystPos = catalyst.getWorld().getName() + " " + catalyst.getX() + "," + catalyst.getY() + "," + catalyst.getZ();
-                    getLogger().warning("Player " + playerName + " died, nearest catalyst at " + catalystPos +
-                                        " triggered bloom exception, death location: " + deathPos + ", reason: " + e.getMessage());
+                    droppedExp = catalystAccess.deathExperience(player, event.getDamageSource().getCausingEntity());
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    getLogger().log(Level.SEVERE, "Cannot calculate Paper death experience for " + player.getName()
+                    + "; base death experience will still drop.", e);
                 }
-            } else {
-                // 附近没有催发体：按原版逻辑正常掉出经验球
-                event.setDroppedExp(droppedExp);
             }
+            event.setDroppedExp(droppedExp);
         }
     }
 
-    public Block getNearestCatalyst(Block center) {
-        for (short i : findingTable) {
-            int x = PosCompressor.getX(i);
-            int y = PosCompressor.getY(i);
-            int z = PosCompressor.getZ(i);
-            Block block = center.getRelative(x, y, z);
-            if (block.getType() == Material.SCULK_CATALYST) {
-                return block;
-            }
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onEntityDie(GenericGameEvent event) {
+        if (event.getEvent() != GameEvent.ENTITY_DIE || !(event.getEntity() instanceof Player player)
+                || !Boolean.TRUE.equals(player.getWorld().getGameRuleValue(GameRule.KEEP_INVENTORY))
+                || catalystAccess == null) {
+            return;
         }
-        return null;
+        try {
+            catalystAccess.addCharge(player, event.getRadius());
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            getLogger().log(Level.SEVERE, "Cannot add Paper sculk charge for " + player.getName()
+                    + "; death experience will still drop.", e);
+        }
     }
 }
 
